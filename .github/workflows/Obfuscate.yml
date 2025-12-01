@@ -5,6 +5,7 @@ on:
     branches:
       - main
   schedule:
+    # 每天凌晨1:00运行
     - cron: "0 1 * * *"
 
 permissions:
@@ -25,11 +26,25 @@ jobs:
 
       - name: 安装依赖项
         run: |
+          # 锁定 obfuscator 版本，保证混淆结果长期稳定
           npm install -g javascript-obfuscator@4.1.0
 
-      - name: 下载 BPB worker.js（使用 Releases 地址）
+      - name: 下载 BPB worker.js（自动抓取最新 Release）
         run: |
-          PRIMARY_URL="https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/download/v4.0.1/worker.js"
+          REPO="bia-pain-bache/BPB-Worker-Panel"
+          ASSET_NAME="worker.js"
+
+          echo "开始抓取最新 Release..."
+
+          # 使用 GitHub API 获取最新 Release 版本下载地址
+          PRIMARY_URL=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" \
+            | grep "browser_download_url" \
+            | grep "$ASSET_NAME" \
+            | cut -d '"' -f 4)
+
+          echo "抓取到最新 Release 地址: $PRIMARY_URL"
+
+          # 备用URL列表
           FALLBACK_URLS=(
             "https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/build/unobfuscated-worker.js"
             "https://cdn.jsdelivr.net/gh/bia-pain-bache/BPB-Worker-Panel@main/build/unobfuscated-worker.js"
@@ -38,24 +53,26 @@ jobs:
 
           echo "开始下载 BPB worker.js 文件..."
 
-          if wget -O origin.js "$PRIMARY_URL"; then
-            echo "Releases URL 下载成功"
+          # 尝试主 URL
+          if [ -n "$PRIMARY_URL" ] && wget -O origin.js "$PRIMARY_URL"; then
+            echo "✅ Releases URL 下载成功"
           else
-            echo "Releases 下载失败，切换备用源..."
+            echo "Releases 下载失败，尝试备用 URL..."
             SUCCESS=false
             for url in "${FALLBACK_URLS[@]}"; do
               echo "尝试: $url"
               if wget -O origin.js "$url"; then
-                echo "备用下载成功: $url"
+                echo "✅ 备用 URL 下载成功: $url"
                 SUCCESS=true
                 break
               fi
             done
-            if [ "$SUCCESS" = false ] || [ ! -s origin.js ]; then
-              echo "全部下载源失败，任务中止"
+            if [ "$SUCCESS" = false ] || [ ! -f origin.js ] || [ ! -s origin.js ]; then
+              echo "❌ 所有下载源失败，任务中止"
               exit 1
             fi
           fi
+
           echo "下载完成: $(wc -c < origin.js) 字节"
 
       - name: 一阶段预混淆（结构扰动层）
